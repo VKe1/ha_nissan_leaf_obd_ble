@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import timedelta
 
 from bleak_retry_connector import get_device
 
@@ -85,11 +86,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Re-trigger a data refresh whenever the adapter reappears in BLE range.
-    # The Bluetooth callback can fire repeatedly while the adapter is merely
-    # advertising, so throttle it to the configured slow poll interval.  The
-    # throttle is reset when the adapter becomes unavailable, ensuring the
-    # first advertisement after the car returns still refreshes immediately.
+    # ------------------------------------------------------------------
+    # Presence-triggered refresh
+    #
+    # Connecting to the adapter wakes the car's OBD/CAN bus, which makes the
+    # Leaf's relays click.  That is normal but not free (relay wear + a small
+    # 12 V drain), so the integration does not poll aggressively.  Instead it
+    # reacts to *presence changes*:
+    #
+    #   * while the adapter keeps advertising in place (car parked at home),
+    #     advertisement-triggered refreshes are throttled to the slow poll
+    #     interval, so the relays are not clicked for every advertisement;
+    #   * when the adapter disappears (car driven away, or the dongle loses
+    #     power with the ignition) the throttle is reset and the coordinator
+    #     falls back to the extra-slow interval;
+    #   * the first advertisement after that triggers an immediate poll, so
+    #     arriving home refreshes the data without waiting for the timer even
+    #     when slow poll is set to e.g. 1800 s.
+    # ------------------------------------------------------------------
     last_adv_refresh = 0.0
     adapter_unavailable = False
 
@@ -100,22 +114,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ) -> None:
         nonlocal last_adv_refresh, adapter_unavailable
         now = time.monotonic()
-        if not adapter_unavailable and now - last_adv_refresh < coordinator.slow_poll:
+        reappeared = adapter_unavailable
+        if not reappeared and now - last_adv_refresh < coordinator.slow_poll:
             return
         adapter_unavailable = False
         last_adv_refresh = now
-        _LOGGER.debug(
-            "OBD adapter %s detected (%s) — scheduling refresh", address, change
-        )
+        if reappeared:
+            _LOGGER.debug(
+                "OBD adapter %s reappeared in range — polling immediately", address
+            )
+        else:
+            _LOGGER.debug(
+                "OBD adapter %s detected (%s) — scheduling refresh", address, change
+            )
         hass.async_create_task(coordinator.async_request_refresh())
 
     @callback
     def _on_adapter_unavailable(
         service_info: bluetooth.BluetoothServiceInfoBleak,
     ) -> None:
-        """Reset the advertisement throttle when the adapter disappears."""
+        """Handle the adapter leaving BLE range.
+
+        Resets the advertisement throttle (so the next sighting polls right
+        away) and parks the coordinator on the extra-slow interval so a
+        pending timer cannot keep trying to connect — and wake the car — while
+        it is away.
+        """
         nonlocal adapter_unavailable
+        if adapter_unavailable:
+            return
         adapter_unavailable = True
+        coordinator.update_interval = timedelta(seconds=coordinator.xs_poll)
         _LOGGER.debug(
             "OBD adapter %s unavailable; next advertisement will refresh", address
         )

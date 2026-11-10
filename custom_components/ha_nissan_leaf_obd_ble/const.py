@@ -2,7 +2,7 @@
 
 NAME = "Nissan Leaf OBD BLE"
 DOMAIN = "ha_nissan_leaf_obd_ble"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 ISSUE_URL = "https://github.com/VKe1/ha_nissan_leaf_obd_ble/issues"
 
@@ -49,11 +49,28 @@ BATTERY_NOMINAL_AH: dict[int, float] = {
 # Default nominal Ah if user doesn't specify (30 kWh is most common)
 DEFAULT_NOMINAL_AH = 79.48
 
-# Default polling intervals (seconds)
-DEFAULT_FAST_POLL = 10
-DEFAULT_SLOW_POLL = 300
+# Default polling intervals (seconds).
+#
+# Every poll connects to the OBD adapter, which wakes the car's OBD/CAN bus
+# and makes the Leaf's relays click.  That is normal behaviour, but it is not
+# free: each actuation adds wear and each wake-up drains the 12 V battery a
+# little.  Polling every 10 s while the car sits on the driveway means
+# thousands of relay clicks per day for data nobody needs.
+#
+# The defaults below are therefore deliberately conservative.  Trip
+# consumption is calculated from two readings (start/end of a drive), so a
+# few minutes of resolution is plenty.  The integration also polls
+# immediately when the adapter reappears in Bluetooth range, so a long
+# interval does not delay the first reading after arriving home.
+DEFAULT_FAST_POLL = 300
+DEFAULT_SLOW_POLL = 1800
 DEFAULT_XS_POLL = 3600
 DEFAULT_FETCH_TIMEOUT = 90
+
+# Hard floor for user-configured poll intervals.  Anything shorter wakes the
+# OBD bus far more often than the car's data changes, and only serves to wear
+# the relays.  Values below this are clamped by the coordinator.
+MIN_POLL_INTERVAL = 60
 
 # Storage — persists last-known sensor values across HA restarts
 STORAGE_KEY = f"{DOMAIN}.sensor_cache"

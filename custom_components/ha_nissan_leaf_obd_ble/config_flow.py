@@ -58,6 +58,7 @@ from .const import (
     DOMAIN,
     GENERATION_AUTO,
     GENERATION_OPTIONS,
+    MIN_POLL_INTERVAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -294,18 +295,20 @@ class NissanLeafOptionsFlowHandler(config_entries.OptionsFlow):
                         CONF_NOMINAL_AH,
                         default=str(self._options.get(CONF_NOMINAL_AH, DEFAULT_NOMINAL_AH)),
                     ): vol.In(battery_choices),
+                    # Every poll wakes the car's OBD bus and clicks its
+                    # relays, so refuse intervals shorter than the floor.
                     vol.Required(
                         "fast_poll",
                         default=self._options.get("fast_poll", DEFAULT_FAST_POLL),
-                    ): int,
+                    ): vol.All(int, vol.Range(min=MIN_POLL_INTERVAL)),
                     vol.Required(
                         "slow_poll",
                         default=self._options.get("slow_poll", DEFAULT_SLOW_POLL),
-                    ): int,
+                    ): vol.All(int, vol.Range(min=MIN_POLL_INTERVAL)),
                     vol.Required(
                         "xs_poll",
                         default=self._options.get("xs_poll", DEFAULT_XS_POLL),
-                    ): int,
+                    ): vol.All(int, vol.Range(min=MIN_POLL_INTERVAL)),
                     vol.Optional(
                         CONF_SERVICE_UUID,
                         default=self._options.get(

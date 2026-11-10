@@ -23,6 +23,7 @@ It is maintained by [@VKe1](https://github.com/VKe1).
 | Manual refresh | — | **Diagnostic "Refresh" button** |
 | Startup with car away | Entities unavailable | **Cached values used immediately** |
 | Reconnect behaviour | Repeated polling while away | **Advertisement-triggered refresh, throttled** |
+| Polling defaults | 10 s fast poll (relay wear) | **Relay-friendly intervals + poll on arrival** |
 
 ---
 
@@ -167,12 +168,80 @@ After setup, click **Configure** on the integration card to adjust:
 | Option | Default | Description |
 |---|---|---|
 | Battery size | 30 kWh (79.48 Ah) | Nominal capacity in Ah, used to calculate state of health |
-| Fast poll interval | 10 s | Polling rate when the car is on and in range |
-| Slow poll interval | 300 s | Polling rate when in range but car is off |
-| Extra-slow poll interval | 3600 s | Polling rate when out of BLE range |
+| Fast poll interval | 300 s | Polling rate when the car is responding (ignition on) |
+| Slow poll interval | 1800 s | Polling rate when in range but not responding; also the advertisement-refresh throttle |
+| Extra-slow poll interval | 3600 s | Fallback timer when out of BLE range (no connection attempted) |
 | BLE service UUID | `0000ffe0-…` | GATT service UUID for the adapter |
 | BLE read characteristic UUID | `0000ffe1-…` | Read characteristic UUID |
 | BLE write characteristic UUID | `0000ffe1-…` | Write characteristic UUID |
+
+---
+
+## Polling intervals and the car's relays
+
+Every time Home Assistant connects to the OBD adapter, the Leaf wakes its
+OBD/CAN bus and the relays can be heard clicking.  This is a property of the
+car, not of this integration, and it cannot be avoided while polling.  It is
+harmless in itself, but two things follow:
+
+- every actuation adds a little wear to the relays,
+- every wake-up draws a small amount of power from the 12 V battery.
+
+Polling every 10 s while the car sits parked therefore means thousands of
+relay clicks a day for data that does not change.  This fork therefore ships
+with conservative defaults:
+
+| Scenario | Default | Notes |
+|---|---|---|
+| Car responding (ignition on) | 300 s | Trip statistics only need the readings at the start and end of a drive |
+| In range but not responding | 1800 s | Car parked; also the throttle for advertisement-driven refreshes |
+| Out of BLE range | 3600 s | No connection is attempted; only a fallback timer |
+
+The intervals can be changed at any time in **Configure**.  Sensible
+trade-offs:
+
+| Goal | Fast | Slow | Extra-slow |
+|---|---|---|---|
+| Default in this fork | 300 | 1800 | 3600 |
+| Maximum relay life (trip-level data only) | 1800 | 3600 | 7200 |
+| Near-live readings while driving (more wear) | 60 | 600 | 3600 |
+
+The minimum accepted value is **60 s**; shorter values are clamped, because
+anything faster only wears the relays without adding useful information.
+
+### Polling when you arrive home
+
+You do not need to shorten the intervals for this.  The integration listens to
+Bluetooth advertisements and:
+
+1. notices when the adapter disappears (car driven away, or the dongle loses
+   power with the ignition),
+2. polls **immediately** the first time the adapter is seen again — even if
+   the slow interval is 1800 s or more,
+3. while the adapter keeps advertising in place (parked at home), limits
+   advertisement-driven polls to the slow interval, so the relays are not
+   clicked for every advertisement.
+
+If you want an additional guarantee (for example to poll the moment your phone
+connects to home Wi-Fi, before Bluetooth notices the car), add an automation
+that presses the refresh button:
+
+```yaml
+automation:
+  - alias: "Leaf: poll on arrival"
+    triggers:
+      - trigger: state
+        entity_id: person.me
+        to: home
+    actions:
+      - action: button.press
+        target:
+          entity_id: button.nissan_leaf_obd_ble_refresh
+```
+
+Check the actual entity ID under *Settings → Devices & services → Entities*.
+A refresh still requires the adapter to be in range; pressing the button while
+the car is away only returns the cached values.
 
 ---
 
@@ -191,14 +260,10 @@ live data.
 
 Each configured adapter gets a diagnostic **Nissan Leaf OBD BLE Refresh**
 button.  Pressing it triggers an immediate poll without waiting for the next
-scheduled interval — useful after turning the car on or when you want an
-up-to-date reading before an automation runs.
-
-While the adapter is advertising, refreshes triggered by Bluetooth
-advertisements are throttled to the slow poll interval so the car's 12V
-battery and the adapter are not hammered.  The throttle resets as soon as the
-adapter becomes unavailable, so the first advertisement after the car returns
-still triggers a refresh immediately.
+scheduled interval — useful after turning the car on, before an automation
+runs, or from an arrival automation (see *Polling when you arrive home*
+above).  The integration already reacts to the adapter reappearing in range,
+so the button is an extra manual safety net rather than a requirement.
 
 ## Known limitations
 
@@ -209,6 +274,12 @@ output power keep updating.  The integration intentionally keeps the last
 known state of charge rather than replacing it with an invalid value, so the
 SoC sensor may appear frozen until the next valid reading.  This is a decoder
 limitation, not a connectivity problem.
+
+**Relays click on every poll**
+: Expected Leaf behaviour, not a fault.  The car cannot be queried without
+waking its OBD bus.  Increase the poll intervals (see *Polling intervals and
+the car's relays*) if the clicking is annoying or you want to minimise relay
+wear.
 
 **Derived virtual sensors are not part of the integration**
 : Virtual state of charge, consumption estimates, and similar calculated
@@ -228,6 +299,11 @@ is within Bluetooth range of your HA host or a Bluetooth proxy.  Check
 **Sensors stay at last known value indefinitely**
 : This is the persistence feature working as designed.  Values update the
 next time the car is in range and the ignition is on.
+
+**Relays click every few minutes while the car is parked at home**
+: The adapter is in range and is being polled at the slow interval.  Raise the
+slow poll interval, or let the dongle power down with the ignition so the
+integration falls back to the extra-slow interval and stops connecting.
 
 **Incorrect battery / SoC values on a ZE0 or AZE0**
 : Ensure you selected the correct generation during setup.  If you used

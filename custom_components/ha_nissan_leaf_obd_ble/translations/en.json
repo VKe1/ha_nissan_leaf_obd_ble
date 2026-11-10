@@ -47,7 +47,7 @@
     "step": {
       "init": {
         "title": "Nissan Leaf OBD BLE — Settings",
-        "description": "Adjust polling intervals and BLE connection settings.",
+        "description": "Adjust polling intervals and BLE connection settings. Every poll wakes the car's OBD bus and makes its relays click, so it is worth preferring longer intervals.",
         "data": {
           "nominal_ah": "Battery size",
           "fast_poll": "Fast polling interval (s)",
@@ -59,9 +59,9 @@
         },
         "data_description": {
           "nominal_ah": "The battery capacity in Ah. Used to calculate State of Health (SOH).",
-          "fast_poll": "How often to poll when the car is on and in range.",
-          "slow_poll": "How often to poll when the car is in range but turned off.",
-          "xs_poll": "How often to poll when the adapter is out of BLE range.  HA will also trigger an immediate poll when the adapter is re-detected.",
+          "fast_poll": "How often to poll while the car is responding (ignition on). Each poll clicks the car's relays, so 300 s is plenty for trip statistics. Minimum 60 s.",
+          "slow_poll": "How often to poll while the car is in range but not responding. Also the minimum spacing between advertisement-triggered refreshes while parked, so the relays are not clicked for every advertisement. Minimum 60 s.",
+          "xs_poll": "How often to check for the adapter while it is out of BLE range. No connection is attempted; this is only a fallback timer. The first advertisement after the car returns always triggers an immediate poll. Minimum 60 s.",
           "service_uuid": "GATT service UUID for the OBD adapter.",
           "characteristic_uuid_read": "GATT characteristic UUID for receiving data.",
           "characteristic_uuid_write": "GATT characteristic UUID for sending commands."

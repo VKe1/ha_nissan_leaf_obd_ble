@@ -24,6 +24,7 @@ from .const import (
     DEFAULT_XS_POLL,
     DOMAIN,
     GENERATION_AUTO,
+    MIN_POLL_INTERVAL,
     STORAGE_KEY,
     STORAGE_VERSION,
 )
@@ -94,11 +95,19 @@ class NissanLeafCoordinator(DataUpdateCoordinator):
         so SOH calculations use the new value.
         """
         self._options = value
-        # Clamp polling intervals to at least one second so a bad option or a
-        # manually edited config entry cannot hammer the adapter.
-        self._fast_poll = max(1, int(value.get("fast_poll", DEFAULT_FAST_POLL)))
-        self._slow_poll = max(1, int(value.get("slow_poll", DEFAULT_SLOW_POLL)))
-        self._xs_poll = max(1, int(value.get("xs_poll", DEFAULT_XS_POLL)))
+        # Clamp polling intervals to a sane floor.  Every poll wakes the car's
+        # OBD bus and clicks its relays, so a very short interval (a stale
+        # option or a hand-edited config entry) must not be able to hammer
+        # the adapter.
+        self._fast_poll = max(
+            MIN_POLL_INTERVAL, int(value.get("fast_poll", DEFAULT_FAST_POLL))
+        )
+        self._slow_poll = max(
+            MIN_POLL_INTERVAL, int(value.get("slow_poll", DEFAULT_SLOW_POLL))
+        )
+        self._xs_poll = max(
+            MIN_POLL_INTERVAL, int(value.get("xs_poll", DEFAULT_XS_POLL))
+        )
         self._fetch_timeout = max(
             1.0, float(value.get("fetch_timeout", DEFAULT_FETCH_TIMEOUT))
         )
@@ -126,9 +135,19 @@ class NissanLeafCoordinator(DataUpdateCoordinator):
         return dict(self._cache_data)
 
     @property
+    def fast_poll(self) -> int:
+        """Return the configured fast polling interval in seconds."""
+        return self._fast_poll
+
+    @property
     def slow_poll(self) -> int:
         """Return the configured slow polling interval in seconds."""
         return self._slow_poll
+
+    @property
+    def xs_poll(self) -> int:
+        """Return the configured extra-slow polling interval in seconds."""
+        return self._xs_poll
 
     # ------------------------------------------------------------------
     # Persistence
