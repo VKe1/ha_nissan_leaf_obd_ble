@@ -7,7 +7,7 @@ import logging
 from datetime import timedelta
 from typing import Any
 
-from homeassistant.components.bluetooth.api import async_address_present
+from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import HomeAssistant
@@ -28,6 +28,7 @@ from .const import (
     STORAGE_VERSION,
 )
 from .generations import get_extra_commands_for_generation
+from .py_nissan_leaf_obd_ble import NissanLeafObdBleApiClient
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ class NissanLeafCoordinator(DataUpdateCoordinator):
         self._address: str = entry.data[CONF_ADDRESS]
         self._generation: str = entry.data.get(CONF_GENERATION, GENERATION_AUTO)
         self.api = api
+        self._api_address: str | None = None
 
         # Persistent cache — populated from storage before the first poll so
         # sensors immediately reflect the last known values after a restart.
@@ -92,10 +94,14 @@ class NissanLeafCoordinator(DataUpdateCoordinator):
         so SOH calculations use the new value.
         """
         self._options = value
-        self._fast_poll = int(value.get("fast_poll", DEFAULT_FAST_POLL))
-        self._slow_poll = int(value.get("slow_poll", DEFAULT_SLOW_POLL))
-        self._xs_poll = int(value.get("xs_poll", DEFAULT_XS_POLL))
-        self._fetch_timeout = float(value.get("fetch_timeout", DEFAULT_FETCH_TIMEOUT))
+        # Clamp polling intervals to at least one second so a bad option or a
+        # manually edited config entry cannot hammer the adapter.
+        self._fast_poll = max(1, int(value.get("fast_poll", DEFAULT_FAST_POLL)))
+        self._slow_poll = max(1, int(value.get("slow_poll", DEFAULT_SLOW_POLL)))
+        self._xs_poll = max(1, int(value.get("xs_poll", DEFAULT_XS_POLL)))
+        self._fetch_timeout = max(
+            1.0, float(value.get("fetch_timeout", DEFAULT_FETCH_TIMEOUT))
+        )
         
         # Rebuild decoders if nominal_ah changed
         new_nominal_ah = value.get(CONF_NOMINAL_AH, DEFAULT_NOMINAL_AH)
@@ -108,6 +114,21 @@ class NissanLeafCoordinator(DataUpdateCoordinator):
             self._generation_extra_commands: dict = get_extra_commands_for_generation(
                 self._generation, nominal_ah=self._nominal_ah
             )
+
+    # ------------------------------------------------------------------
+    # Public helpers used by other modules (e.g. the refresh button and the
+    # Bluetooth advertisement throttle).
+    # ------------------------------------------------------------------
+
+    @property
+    def cached_data(self) -> dict[str, Any]:
+        """Return a copy of the last known sensor values."""
+        return dict(self._cache_data)
+
+    @property
+    def slow_poll(self) -> int:
+        """Return the configured slow polling interval in seconds."""
+        return self._slow_poll
 
     # ------------------------------------------------------------------
     # Persistence
@@ -150,7 +171,9 @@ class NissanLeafCoordinator(DataUpdateCoordinator):
         a value.  New data from the car updates and re-saves the cache; if the
         device is unreachable the previous values are returned unchanged.
         """
-        available = async_address_present(self.hass, self._address, connectable=True)
+        available = bluetooth.async_address_present(
+            self.hass, self._address, connectable=True
+        )
 
         if not available:
             _LOGGER.debug(
@@ -163,6 +186,25 @@ class NissanLeafCoordinator(DataUpdateCoordinator):
             # mutated externally.
             return dict(self._cache_data)
 
+        ble_device = bluetooth.async_ble_device_from_address(
+            self.hass, self._address.upper(), connectable=True
+        )
+        if ble_device is None:
+            _LOGGER.debug(
+                "OBD adapter %s has no connectable BLE device; using cached data "
+                "(interval → %ds)",
+                self._address,
+                self._slow_poll,
+            )
+            self.update_interval = timedelta(seconds=self._slow_poll)
+            return dict(self._cache_data)
+
+        # Compare by address rather than object identity: HA may hand out a new
+        # BLEDevice instance for the same adapter after rediscovery.
+        if self.api is None or self._api_address != ble_device.address:
+            self.api = NissanLeafObdBleApiClient(ble_device)
+            self._api_address = ble_device.address
+
         try:
             new_data = await asyncio.wait_for(
                 self.api.async_get_data(
@@ -173,10 +215,12 @@ class NissanLeafCoordinator(DataUpdateCoordinator):
                 timeout=self._fetch_timeout,
             )
         except TimeoutError as err:
+            self.update_interval = timedelta(seconds=self._slow_poll)
             raise UpdateFailed(
                 f"BLE fetch timed out after {self._fetch_timeout}s"
             ) from err
         except Exception as err:  # noqa: BLE001
+            self.update_interval = timedelta(seconds=self._slow_poll)
             raise UpdateFailed(f"Unable to fetch OBD data: {err}") from err
 
         if new_data is None:
@@ -193,7 +237,9 @@ class NissanLeafCoordinator(DataUpdateCoordinator):
             if new_data.get("odometer") == 0:
                 new_data = dict(new_data)
                 new_data.pop("odometer", None)
-            self._cache_data.update(new_data)
+            self._cache_data.update(
+                {k: v for k, v in new_data.items() if v is not None}
+            )
             await self._async_save_cache()
             _LOGGER.debug(
                 "Fetched %d sensor values from %s", len(new_data), self._address

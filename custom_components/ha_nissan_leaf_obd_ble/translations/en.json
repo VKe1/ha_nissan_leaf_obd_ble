@@ -39,7 +39,7 @@
     },
     "abort": {
       "already_configured": "This OBD adapter is already configured.",
-      "no_unconfigured_devices": "No OBDBLE adapters were found.  Plug in the adapter, turn on the ignition, and ensure the adapter is within Bluetooth range, then try again.",
+      "no_unconfigured_devices": "No supported OBD BLE adapters were found.  Plug in the adapter, turn on the ignition, and ensure the adapter is within Bluetooth range, then try again.",
       "device_not_found": "The selected adapter could not be located."
     }
   },
@@ -49,6 +49,7 @@
         "title": "Nissan Leaf OBD BLE — Settings",
         "description": "Adjust polling intervals and BLE connection settings.",
         "data": {
+          "nominal_ah": "Battery size",
           "fast_poll": "Fast polling interval (s)",
           "slow_poll": "Slow polling interval (s)",
           "xs_poll": "Extra-slow polling interval (s)",
@@ -57,6 +58,7 @@
           "characteristic_uuid_write": "BLE write characteristic UUID"
         },
         "data_description": {
+          "nominal_ah": "The battery capacity in Ah. Used to calculate State of Health (SOH).",
           "fast_poll": "How often to poll when the car is on and in range.",
           "slow_poll": "How often to poll when the car is in range but turned off.",
           "xs_poll": "How often to poll when the adapter is out of BLE range.  HA will also trigger an immediate poll when the adapter is re-detected.",

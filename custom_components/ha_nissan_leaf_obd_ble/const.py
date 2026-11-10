@@ -2,9 +2,9 @@
 
 NAME = "Nissan Leaf OBD BLE"
 DOMAIN = "ha_nissan_leaf_obd_ble"
-VERSION = "1.0.1"
+VERSION = "1.1.0"
 
-ISSUE_URL = "https://github.com/hucknz/ha_nissan_leaf_obd_ble/issues"
+ISSUE_URL = "https://github.com/VKe1/ha_nissan_leaf_obd_ble/issues"
 
 # Configuration keys — stored in config entry DATA (require re-adding to change)
 CONF_GENERATION = "generation"
@@ -21,7 +21,7 @@ DEFAULT_CHARACTERISTIC_UUID_READ = "0000ffe1-0000-1000-8000-00805f9b34fb"
 DEFAULT_CHARACTERISTIC_UUID_WRITE = "0000ffe1-0000-1000-8000-00805f9b34fb"
 
 # BLE local names to search for when scanning for adapters
-BLE_LOCAL_NAMES = {"OBDBLE"}
+BLE_LOCAL_NAMES = {"OBDBLE", "IOS-Vlink"}
 
 # Generation identifiers
 GENERATION_AUTO = "auto"
