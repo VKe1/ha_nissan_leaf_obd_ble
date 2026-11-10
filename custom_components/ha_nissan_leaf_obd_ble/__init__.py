@@ -18,14 +18,16 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
-
-from .py_nissan_leaf_obd_ble import NissanLeafObdBleApiClient
 
 from .const import DOMAIN, STARTUP_MESSAGE, VERSION
 from .coordinator import NissanLeafCoordinator
+from .py_nissan_leaf_obd_ble import NissanLeafObdBleApiClient
 
 __version__ = VERSION
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 PLATFORMS = [Platform.SENSOR, Platform.BUTTON]
 
