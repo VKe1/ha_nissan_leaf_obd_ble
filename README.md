@@ -4,10 +4,14 @@ A Home Assistant custom integration for monitoring Nissan Leaf battery and
 vehicle data via a Bluetooth Low Energy ELM327 OBD-II adapter (e.g. LeLink2).
 
 This integration is a fork of
-[pbutterworth/nissan-leaf-obd-ble](https://github.com/pbutterworth/nissan-leaf-obd-ble)
-with the following additions:
+[hucknz/ha_nissan_leaf_obd_ble](https://github.com/hucknz/ha_nissan_leaf_obd_ble),
+which in turn builds on
+[pbutterworth/nissan-leaf-obd-ble](https://github.com/pbutterworth/nissan-leaf-obd-ble).
+It is maintained by [@VKe1](https://github.com/VKe1).
 
-| Feature | Original | This fork |
+### What this fork adds
+
+| Feature | Upstream | This fork |
 |---|---|---|
 | OBD adapter selection | Manual MAC entry | **Dropdown of discovered adapters** |
 | Generation support | Manual overrides.yaml | **Built-in per-generation profiles** |
@@ -15,6 +19,10 @@ with the following additions:
 | ZE0/AZE0 battery decoder | ZE1 offsets (incorrect) | **Correct ZE0 byte offsets** |
 | Sensor list | Fixed (all sensors always created) | **Trimmed to generation-supported set** |
 | Data persistence | Lost on HA restart | **Persisted to HA storage** |
+| IOS-Vlink BLE adapter | Not recognised | **Supported (`IOS-Vlink` local name)** |
+| Manual refresh | — | **Diagnostic "Refresh" button** |
+| Startup with car away | Entities unavailable | **Cached values used immediately** |
+| Reconnect behaviour | Repeated polling while away | **Advertisement-triggered refresh, throttled** |
 
 ---
 
@@ -23,6 +31,7 @@ with the following additions:
 | Item | Notes |
 |---|---|
 | LeLink2 ELM327 BLE OBD-II adapter | Primary tested hardware |
+| IOS-Vlink ELM327 BLE OBD-II adapter | Supported (advertises as `IOS-Vlink`) |
 | Any ELM327 BLE OBD-II adapter advertising as `OBDBLE` | Should work; UUIDs configurable |
 | ESPHome Bluetooth Proxy (e.g. GL-iNet GL-S10) | Recommended for garage setups |
 
@@ -53,7 +62,7 @@ with the built-in `bluetooth_adapters` dependency.
 ### Option 1 — HACS (Custom Repository)
 
 1. Open HACS → Integrations → ⋮ → Custom repositories.
-2. Add `https://github.com/hucknz/ha_nissan_leaf_obd_ble` with category **Integration**.
+2. Add `https://github.com/VKe1/ha_nissan_leaf_obd_ble` with category **Integration**.
 3. Find *Nissan Leaf OBD BLE* and click **Download**.
 4. Restart Home Assistant.
 
@@ -92,10 +101,6 @@ with the built-in `bluetooth_adapters` dependency.
 
 ## Sensors
 
-### All generations
-
-| Entity | Unit | Description |
-|---|---|---|
 Entity IDs are derived from the sensor name prefixed with
 `Nissan Leaf OBD BLE`, e.g. `sensor.nissan_leaf_obd_ble_state_of_charge`.
 
@@ -149,9 +154,9 @@ Entity IDs are derived from the sensor name prefixed with
 
 The battery decoder byte offsets for ZE0/AZE0 (`state_of_charge`,
 `hv_battery_health`, `hv_battery_Ah`) are based on community research and
-testing on a 2016 Nissan Leaf.  They have not been exhaustively verified across
-all ZE0 and AZE0 vehicles.  If you notice incorrect battery figures, please
-open an issue with your raw LBC data.
+tested on a 2018 AZE0 with a 30 kWh battery.  They have not been exhaustively
+verified across all ZE0 and AZE0 vehicles.  If you notice incorrect battery
+figures, please open an issue with your raw LBC data.
 
 ---
 
@@ -161,7 +166,7 @@ After setup, click **Configure** on the integration card to adjust:
 
 | Option | Default | Description |
 |---|---|---|
-| Battery size | 30 kWh | Used to calculate state of health |
+| Battery size | 30 kWh (79.48 Ah) | Nominal capacity in Ah, used to calculate state of health |
 | Fast poll interval | 10 s | Polling rate when the car is on and in range |
 | Slow poll interval | 300 s | Polling rate when in range but car is off |
 | Extra-slow poll interval | 3600 s | Polling rate when out of BLE range |
@@ -176,6 +181,40 @@ After setup, click **Configure** on the integration card to adjust:
 Sensor values are saved to HA's `.storage/` directory after each successful
 poll.  After a Home Assistant restart, all sensors immediately display their
 last known values — no need to drive the car home first.
+
+If the first poll after startup fails (for example because the car is away or
+the adapter is not yet reachable), the integration starts with the cached
+values instead of failing setup.  The next successful poll replaces them with
+live data.
+
+## Refresh button
+
+Each configured adapter gets a diagnostic **Nissan Leaf OBD BLE Refresh**
+button.  Pressing it triggers an immediate poll without waiting for the next
+scheduled interval — useful after turning the car on or when you want an
+up-to-date reading before an automation runs.
+
+While the adapter is advertising, refreshes triggered by Bluetooth
+advertisements are throttled to the slow poll interval so the car's 12V
+battery and the adapter are not hammered.  The throttle resets as soon as the
+adapter becomes unavailable, so the first advertisement after the car returns
+still triggers a refresh immediately.
+
+## Known limitations
+
+**State of charge may freeze while charging**
+: The battery controller (`lbc`) can return no usable value (or `0xFFFFFF`)
+during some charging sessions, while other values such as on-board charger
+output power keep updating.  The integration intentionally keeps the last
+known state of charge rather than replacing it with an invalid value, so the
+SoC sensor may appear frozen until the next valid reading.  This is a decoder
+limitation, not a connectivity problem.
+
+**Derived virtual sensors are not part of the integration**
+: Virtual state of charge, consumption estimates, and similar calculated
+values belong in Home Assistant templates (or the Energy dashboard) rather
+than in this integration.  Keeping them in templates makes them easy to tune
+without changing the integration.
 
 ---
 
@@ -194,6 +233,16 @@ next time the car is in range and the ignition is on.
 : Ensure you selected the correct generation during setup.  If you used
 *Auto*, re-add the integration and select *ZE0* or *AZE0* explicitly.
 
+**SoC is stuck at the same value while charging**
+: See *Known limitations* above.  The battery controller occasionally reports
+no usable SoC during charging; the integration keeps the last valid value
+until a new one arrives.
+
+**Refresh button does nothing**
+: A refresh still requires the adapter to be reachable over Bluetooth.  Check
+the standard *Bluetooth* integration and the debug log; the button triggers a
+poll but cannot wake an adapter that is out of range.
+
 **Enable debug logging**
 ```yaml
 # configuration.yaml
@@ -208,7 +257,9 @@ logger:
 ## Credits
 
 - [pbutterworth/nissan-leaf-obd-ble](https://github.com/pbutterworth/nissan-leaf-obd-ble) — original integration
+- [hucknz/ha_nissan_leaf_obd_ble](https://github.com/hucknz/ha_nissan_leaf_obd_ble) — upstream fork this repository is based on
 - [pbutterworth/py-nissan-leaf-obd-ble](https://github.com/pbutterworth/py-nissan-leaf-obd-ble) — upstream Python library, bundled here in modified form
+- [@Jopand](https://github.com/Jopand) — IOS-Vlink adapter testing and contributions
 - [HA Community thread](https://community.home-assistant.io/t/custom-component-nissan-leaf-via-lelink-2-elm327-ble/561961)
 
 ## License
